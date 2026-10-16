@@ -20,4 +20,5 @@ public interface NhanVienRepository extends JpaRepository<NhanVienEntity, Long> 
 
     // Kiểm tra tồn tại email
     boolean existsByEmail(String email);
+
 }
