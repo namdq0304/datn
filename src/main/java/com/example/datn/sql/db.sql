@@ -137,6 +137,7 @@ CREATE TABLE SAN_PHAM (
                           danh_muc_id INT FOREIGN KEY REFERENCES DANH_MUC(id),
                           thuong_hieu_id INT FOREIGN KEY REFERENCES THUONG_HIEU(id),
                           xuat_xu_id INT FOREIGN KEY REFERENCES XUAT_XU(id),
+                          chat_lieu_id INT FOREIGN KEY REFERENCES CHAT_LIEU(id),
                           mo_ta NVARCHAR(500),
                           gia_ban DECIMAL(12,2),
                           trang_thai BIT DEFAULT 1,
@@ -158,7 +159,6 @@ CREATE TABLE CHI_TIET_SAN_PHAM (
                                    id INT IDENTITY(1,1) PRIMARY KEY,
                                    ma_chi_tiet VARCHAR(30) NOT NULL,
                                    san_pham_id INT FOREIGN KEY REFERENCES SAN_PHAM(id),
-                                   chat_lieu_id INT FOREIGN KEY REFERENCES CHAT_LIEU(id),
                                    mau_sac_id INT FOREIGN KEY REFERENCES MAU_SAC(id),
                                    kich_thuoc_id INT FOREIGN KEY REFERENCES KICH_THUOC(id),
                                    so_luong INT DEFAULT 0,
@@ -265,4 +265,25 @@ ALTER TABLE NHAN_VIEN
 ALTER TABLE KHACH_HANG
     ADD ngay_tao DATETIME2 NOT NULL
         DEFAULT SYSDATETIME();
+
+
+alter table SAN_PHAM add gia_goc DECIMAL(12,2) default   null
+
+alter table CHI_TIET_SAN_PHAM add gia_goc DECIMAL(12,2) default   null
+
+alter table CHI_TIET_SAN_PHAM add gia_nhap DECIMAL(12,2) default   null
+
+
+
+UPDATE SAN_PHAM SET gia_goc = ROUND(gia_ban / 0.85, -3) where id > 0;
+
+UPDATE c
+SET c.gia_nhap = ROUND(sp.gia_ban * 0.7, -3)
+    FROM CHI_TIET_SAN_PHAM c
+JOIN SAN_PHAM sp ON sp.id = c.san_pham_id
+WHERE c.gia_nhap IS NULL;
+
+
+
+CREATE UNIQUE INDEX UQ_CTSP ON CHI_TIET_SAN_PHAM (san_pham_id, mau_sac_id, kich_thuoc_id) WHERE trang_thai = 1;
 
