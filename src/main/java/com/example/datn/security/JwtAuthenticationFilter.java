@@ -1,5 +1,6 @@
 package com.example.datn.security;
 
+import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -9,6 +10,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -39,14 +41,27 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         final String token = authHeader.substring(7); // Bỏ chữ 'Bearer ' lấy token
-        final String username = jwtUtil.extractUsername(token);
+        final String username;
+        try {
+            username = jwtUtil.extractUsername(token);
+        } catch (JwtException | IllegalArgumentException e) {
+            // Token hết hạn / sai chữ ký → bỏ qua, request đi tiếp như chưa đăng nhập → 401 (FE tự refresh token)
+            filterChain.doFilter(request, response);
+            return;
+        }
 
         // 3. Nếu có username và chưa được xác thực trong phiên hiện tại
         if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-            UserDetails userDetails = this.userDetailsService.loadUserByUsername(username);
+            UserDetails userDetails;
+            try {
+                userDetails = this.userDetailsService.loadUserByUsername(username);
+            } catch (UsernameNotFoundException e) {
+                filterChain.doFilter(request, response);
+                return;
+            }
 
-            // 4. Kiểm tra token có hợp lệ không
-            if (jwtUtil.validateToken(token, userDetails)) {
+            // 4. Kiểm tra token có hợp lệ không — tài khoản đã bị khóa thì token cũ cũng không dùng được
+            if (userDetails.isEnabled() && jwtUtil.validateToken(token, userDetails)) {
                 UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                         userDetails,
                         null,

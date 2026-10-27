@@ -5,6 +5,7 @@ import com.example.datn.entity.NhanVienEntity;
 import com.example.datn.repository.KhachHangRepository;
 import com.example.datn.repository.NhanVienRepository;
 import com.example.datn.security.JwtUtil;
+import com.example.datn.service.KhachHangService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,6 +43,9 @@ public class AuthController {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private KhachHangService khachHangService;
 
     // =========================================================================
     // I. PHẦN DÀNH CHO NHÂN VIÊN / QUẢN TRỊ (ADMIN & NHÂN VIÊN)
@@ -265,8 +269,8 @@ public class AuthController {
             return ResponseEntity.badRequest().body(error);
         }
 
-        // Tạo mã khách hàng ngẫu nhiên: KH + 6 chữ số
-        String maKhachHang = "KH" + (int)((Math.random() * 900000) + 100000);
+        // Mã khách hàng tuần tự KH0001... (dùng chung với trang quản trị, tránh trùng mã ngẫu nhiên)
+        String maKhachHang = khachHangService.nextMaKhachHang();
 
         KhachHangEntity kh = KhachHangEntity.builder()
                 .maKhachHang(maKhachHang)
