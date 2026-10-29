@@ -1,22 +1,31 @@
 package com.example.datn.controller;
 
 import com.example.datn.dto.ChatLieuDTO;
+import com.example.datn.dto.MauSacDTO;
+import com.example.datn.dto.PageResponse;
 import com.example.datn.entity.ChatLieuEntity;
 import com.example.datn.repository.ChatLieuRepository;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/chat-lieu")
 public class ChatLieuController {
-
-    private final ChatLieuRepository chatLieuRepository;
+    @Autowired
+    private  ChatLieuRepository chatLieuRepository;
 
     public ChatLieuController(ChatLieuRepository chatLieuRepository) {
         this.chatLieuRepository = chatLieuRepository;
@@ -31,6 +40,21 @@ public class ChatLieuController {
                 .map(this::toDTO)
                 .toList();
         return ResponseEntity.ok(list);
+    }
+    @GetMapping("/page")
+    public PageResponse<ChatLieuDTO> getPage(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(defaultValue = "") String q,
+            @RequestParam(required = false) Boolean trangThai) {
+
+        size = Math.min(Math.max(size, 1), 100);
+        page = Math.max(page, 0);
+
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "id"));
+        Page<ChatLieuEntity> result = chatLieuRepository.search(q.trim(), trangThai, pageable);
+
+        return PageResponse.of(result, result.getContent().stream().map(this::toDTO).toList());
     }
 
     // ── Chi tiết 1 chất liệu ──
@@ -102,5 +126,25 @@ public class ChatLieuController {
                 .moTa(e.getMoTa())
                 .trangThai(e.getTrangThai())
                 .build();
+    }
+    private ChatLieuEntity findById(Long id) {
+        return chatLieuRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy thương hiệu"));
+    }
+
+    @PatchMapping("/{id}/trang-thai")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Transactional
+    public ResponseEntity<ChatLieuDTO> updateStatus(
+            @PathVariable Long id,
+            @RequestBody Map<String, Boolean> body) {
+
+        Boolean trangThai = body.get("trangThai");
+        if (trangThai == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Thiếu trường trangThai");
+        }
+        ChatLieuEntity e = findById(id);
+        e.setTrangThai(trangThai);
+        return ResponseEntity.ok(toDTO(chatLieuRepository.save(e)));
     }
 }

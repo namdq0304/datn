@@ -34,8 +34,8 @@ import java.util.*;
 @RequestMapping("/san-pham")
 @RequiredArgsConstructor
 public class SanPhamController {
-
-    private final SanPhamRepository sanPhamRepository;
+    @Autowired
+    private  SanPhamRepository sanPhamRepository;
     @Autowired
     private  SanPhamChiTietRepository chiTietRepository;
     // ------------------------------------------------------------------ helper
@@ -194,5 +194,16 @@ public class SanPhamController {
                             Map.of("success", true, "message", "Đã xóa sản phẩm thành công!"));
                 })
                 .orElseGet(this::notFound);
+    }
+
+    @PatchMapping("/{id}/trang-thai")
+    public ResponseEntity<SanPhamDTO> updateStatus(
+            @PathVariable Integer id,
+            @RequestBody Map<String, Boolean> body) {
+
+        SanPhamEntity e = sanPhamRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy sản phẩm"));
+        e.setTrangThai(Boolean.TRUE.equals(body.get("trangThai")));
+        return ResponseEntity.ok(toDTO(sanPhamRepository.save(e)));
     }
 }
