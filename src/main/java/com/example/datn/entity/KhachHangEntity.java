@@ -3,8 +3,10 @@ package com.example.datn.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import lombok.experimental.FieldDefaults;
+import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "KHACH_HANG")
@@ -43,4 +45,8 @@ public class KhachHangEntity {
 
     @Column(name = "mat_khau", length = 255)
     String matKhau;
+
+    @CreationTimestamp
+    @Column(name = "ngay_tao", updatable = false)
+    LocalDateTime ngayTao;
 }
