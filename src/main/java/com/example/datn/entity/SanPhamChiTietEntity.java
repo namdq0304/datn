@@ -42,8 +42,7 @@ public class SanPhamChiTietEntity {
     @Column(name = "gia_ban", precision = 12, scale = 2)
     BigDecimal giaBan;
 
-    @Column(name = "gia_goc", precision = 12, scale = 2)
-    BigDecimal giaGoc;
+
     @Column(name = "gia_nhap", precision = 12, scale = 2)
     BigDecimal giaNhap;
 

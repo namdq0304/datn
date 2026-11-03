@@ -41,4 +41,7 @@ public class SanPhamDTO {
     private Boolean trangThai;
     private String ngayTao;
     private Long tongTonKho;
+    private Long tongBan;      // tổng số lượng đã bán — dùng cho sản phẩm hot
+    private Integer gioiTinh;  // 0=nam, 1=nữ, null=unisex
+    private String urlAnhChinh; // ảnh chính từ bảng HINH_ANH
 }

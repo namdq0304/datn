@@ -65,6 +65,7 @@ public class ChatLieuController {
 
     // ── Thêm mới ──
     @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
     @Transactional
     public ResponseEntity<ChatLieuDTO> create(@Valid @RequestBody ChatLieuDTO dto) {
         String ma = dto.getMaChatLieu().trim();
@@ -85,6 +86,7 @@ public class ChatLieuController {
 
     // ── Cập nhật ──
     @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     @Transactional
     public ResponseEntity<ChatLieuDTO> update(@PathVariable Integer id,
                                               @Valid @RequestBody ChatLieuDTO dto) {
@@ -104,6 +106,7 @@ public class ChatLieuController {
 
     // ── Xóa mềm ──
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     @Transactional
     public ResponseEntity<Void> delete(@PathVariable Integer id) {
         ChatLieuEntity entity = findActive(id);

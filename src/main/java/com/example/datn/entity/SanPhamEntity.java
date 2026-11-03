@@ -43,13 +43,11 @@ public class SanPhamEntity {
     @Column(name = "mo_ta", length = 500)
     String moTa;
 
-    @Column(name = "gia_ban", precision = 12, scale = 2)
-    BigDecimal giaBan;
-    @Column(name = "gia_goc", precision = 12, scale = 2)
-    BigDecimal giaGoc;
-
     @Column(name = "trang_thai")
     Boolean trangThai;
+
+    @Column(name = "gioi_tinh" ) // 0 là nam 1 là nữ
+    private Integer gioiTinh;
 
     @CreationTimestamp
     @Column(name = "ngay_tao", updatable = false)

@@ -11,6 +11,7 @@ import com.example.datn.repository.KichThuocRepository;
 import com.example.datn.repository.MauSacRepository;
 import com.example.datn.repository.SanPhamChiTietRepository;
 import com.example.datn.repository.SanPhamRepository;
+import com.example.datn.security.PublicApi;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -44,7 +45,7 @@ public class SanPhamChiTietController {
         return auth != null && auth.getAuthorities().stream()
                 .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
     }
-
+    @PublicApi
     @GetMapping("/san-pham/{sanPhamId}")
     @Transactional(readOnly = true)
     public ResponseEntity<List<SanPhamChiTietDTO>> getBySanPham(@PathVariable Long sanPhamId,
@@ -67,18 +68,14 @@ public class SanPhamChiTietController {
                 .tenKichThuoc(e.getKichThuoc().getTenKichThuoc())
                 .soLuong(e.getSoLuong() == null ? 0 : e.getSoLuong())
                 .giaBan(e.getGiaBan())
-                .giaGoc(e.getGiaGoc())
+
                 .giaNhap(admin ? e.getGiaNhap() : null)      // không lộ giá nhập cho nhân viên
-                .giaBanHieuLuc(e.getGiaBan() != null ? e.getGiaBan() : sp.getGiaBan())
-                .giaGocHieuLuc(e.getGiaGoc() != null ? e.getGiaGoc() : sp.getGiaGoc())
+                .giaBanHieuLuc(e.getGiaBan() )
                 .trangThai(e.getTrangThai())
                 .build();
     }
     private void checkGia(BigDecimal giaBan, BigDecimal giaGoc, BigDecimal giaNhap, SanPhamEntity sp) {
-        BigDecimal ban = giaBan != null ? giaBan : sp.getGiaBan();
-        BigDecimal goc = giaGoc != null ? giaGoc : sp.getGiaGoc();
-        if (ban != null && goc != null && goc.compareTo(ban) < 0)
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Giá gốc phải ≥ giá bán");
+        BigDecimal ban = giaBan ;
         if (ban != null && giaNhap != null && giaNhap.compareTo(ban) > 0)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Giá nhập không được lớn hơn giá bán");
     }
@@ -125,7 +122,6 @@ public class SanPhamChiTietController {
                     .kichThuoc(size)
                     .soLuong(it.getSoLuong())
                     .giaBan(req.getGiaBan())     // null = theo giá sản phẩm
-                    .giaGoc(req.getGiaGoc())     // null = theo giá gốc sản phẩm
                     .giaNhap(req.getGiaNhap())
                     .trangThai(true)
                     .build();
@@ -154,7 +150,6 @@ public class SanPhamChiTietController {
 
         e.setSoLuong(req.getSoLuong());
         e.setGiaBan(req.getGiaBan());
-        e.setGiaGoc(req.getGiaGoc());
         e.setGiaNhap(req.getGiaNhap());
 
         return ResponseEntity.ok(toDTO(repo.save(e), true));

@@ -7,6 +7,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -43,4 +45,25 @@ public interface SanPhamChiTietRepository extends JpaRepository<SanPhamChiTietEn
        GROUP BY c.sanPham.id
        """)
     List<Object[]> sumSoLuongBySanPhamIds(@Param("ids") List<Long> ids);
+
+
+    interface GiaTongHop {
+        Integer getSanPhamId();
+        BigDecimal getGiaMin();
+        BigDecimal getGiaMax();
+        BigDecimal getGiaGocMax();
+        Long getSoBienTheGiamGia();
+        Long getTonKho();
+    }
+
+    @Query("""
+    SELECT ct.sanPham.id AS sanPhamId,
+           MIN(ct.giaBan) AS giaMin,
+           MAX(ct.giaBan) AS giaMax,
+           SUM(ct.soLuong) AS tonKho
+    FROM SanPhamChiTietEntity ct
+    WHERE ct.sanPham.id IN :ids AND ct.trangThai = true AND ct.soLuong > 0
+    GROUP BY ct.sanPham.id
+    """)
+    List<GiaTongHop> tongHopGia(@Param("ids") Collection<Integer> ids);
 }

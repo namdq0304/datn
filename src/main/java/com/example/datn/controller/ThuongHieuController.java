@@ -28,8 +28,13 @@ public class ThuongHieuController {
     private ThuongHieuRepository thuongHieuRepository;
 
     @GetMapping
-    public ResponseEntity<List<ThuongHieuEntity>> getAll() {
-        return ResponseEntity.ok(thuongHieuRepository.findAll());
+    public ResponseEntity<List<ThuongHieuDTO>> getAll() {
+        List<ThuongHieuDTO> list = thuongHieuRepository
+                .findByTrangThaiTrueOrderByIdAsc()
+                .stream()
+                .map(this::toDTO)
+                .toList();
+        return ResponseEntity.ok(list);
     }
 
     private ThuongHieuDTO toDTO(ThuongHieuEntity e) {

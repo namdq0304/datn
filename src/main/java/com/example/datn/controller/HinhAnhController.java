@@ -1,5 +1,6 @@
 package com.example.datn.controller;
 
+import com.example.datn.security.PublicApi;
 import com.example.datn.dto.HinhAnhDTO;
 import com.example.datn.entity.HinhAnhEntity;
 import com.example.datn.entity.SanPhamEntity;
@@ -111,7 +112,8 @@ public class HinhAnhController {
                 .body(saved.stream().map(this::toDTO).toList());
     }
 
-    // ── Danh sách ảnh của 1 sản phẩm (ảnh chính đứng đầu) ─────────────────
+    // ── Danh sách ảnh của 1 sản phẩm — PUBLIC, không cần token ───────────────
+    @PublicApi
     @GetMapping("/san-pham/{sanPhamId}")
     @Transactional(readOnly = true)
     public ResponseEntity<List<HinhAnhDTO>> getBySanPham(@PathVariable Integer sanPhamId) {
