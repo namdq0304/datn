@@ -1,0 +1,11 @@
+export { default as DashboardTab } from './DashboardTab';
+export { default as PosTab } from './PosTab';
+export { default as ProductsTab } from './ProductsTab';
+export { default as OrdersTab } from './OrdersTab';
+export { default as CategoriesTab } from './CategoriesTab';
+export { default as DiscountsTab } from './DiscountsTab';
+export { default as EmployeesTab } from './EmployeesTab';
+export { default as CustomersTab } from './CustomersTab';
+export { default as ChatTab } from './ChatTab';
+export { default as AddProductView } from './AddProductView';
+export { default as ProductVariantsView } from './ProductVariantsView';
