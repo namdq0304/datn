@@ -67,16 +67,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     log.warn("Token validation FAILED for user: {}", username);
                 }
             }
-            System.out.println("done let go");
-            filterChain.doFilter(request, response);
-
         } catch (ExpiredJwtException e) {
-            log.warn("Token expired for URI: {}", uri);
-            sendError(response, HttpStatus.UNAUTHORIZED, "Token đã hết hạn, vui lòng đăng nhập lại!");
-        } catch (JwtException | IllegalArgumentException e) {
-            log.warn("Invalid token for URI: {}, error: {}", uri, e.getMessage());
-            sendError(response, HttpStatus.UNAUTHORIZED, "Token không hợp lệ!");
+            // Token hết hạn → coi như KHÁCH VÃNG LAI (không chặn ở đây):
+            //  - API công khai (sản phẩm, danh mục...) vẫn trả dữ liệu → khách không bị đá ra trang đăng nhập
+            //  - API cần đăng nhập → Spring Security trả 401 qua authenticationEntryPoint → FE tự refresh token
+            log.debug("Token expired for URI: {} → xử lý như chưa đăng nhập", uri);
+            SecurityContextHolder.clearContext();
+        } catch (JwtException | IllegalArgumentException
+                 | org.springframework.security.core.userdetails.UsernameNotFoundException e) {
+            log.warn("Invalid token for URI: {}, error: {} → xử lý như chưa đăng nhập", uri, e.getMessage());
+            SecurityContextHolder.clearContext();
         }
+        filterChain.doFilter(request, response);
     }
 
     private void sendError(HttpServletResponse response, HttpStatus status, String message)

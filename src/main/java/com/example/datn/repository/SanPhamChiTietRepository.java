@@ -36,6 +36,42 @@ public interface SanPhamChiTietRepository extends JpaRepository<SanPhamChiTietEn
 
     Optional<SanPhamChiTietEntity> findByIdAndTrangThaiTrue(Long id);
 
+    /** Giá + tồn cho lưới POS — tính trên mọi biến thể đang bán có giá (kể cả hết hàng). */
+    interface GiaBanHang {
+        Long getSanPhamId();
+        BigDecimal getGiaMin();
+        BigDecimal getGiaMax();
+        Long getTonKho();
+    }
+
+    @Query("""
+       SELECT c.sanPham.id AS sanPhamId,
+              MIN(c.giaBan) AS giaMin,
+              MAX(c.giaBan) AS giaMax,
+              SUM(COALESCE(c.soLuong, 0)) AS tonKho
+       FROM SanPhamChiTietEntity c
+       WHERE c.sanPham.id IN :ids AND c.trangThai = true AND c.giaBan IS NOT NULL
+       GROUP BY c.sanPham.id
+       """)
+    List<GiaBanHang> giaBanHang(@Param("ids") Collection<Long> ids);
+
+    /**
+     * Lấy biến thể + KHÓA DÒNG (UPDLOCK) để trừ tồn kho khi tạo hóa đơn.
+     * Giao dịch khác muốn bán cùng biến thể phải chờ → không bán vượt tồn.
+     * Chỉ lấy biến thể đang bán của sản phẩm đang bán.
+     */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+       SELECT c FROM SanPhamChiTietEntity c
+       WHERE c.id = :id AND c.trangThai = true AND c.sanPham.trangThai = true
+       """)
+    Optional<SanPhamChiTietEntity> findDangBanForUpdate(@Param("id") Long id);
+
+    /** Khóa dòng biến thể bất kể trạng thái — dùng khi hoàn kho (hủy hóa đơn). */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT c FROM SanPhamChiTietEntity c WHERE c.id = :id")
+    Optional<SanPhamChiTietEntity> findByIdForUpdate(@Param("id") Long id);
+
     boolean existsBySanPham_IdAndMauSac_IdAndKichThuoc_IdAndTrangThaiTrue(
             Long sanPhamId, Long mauSacId, Long kichThuocId);
     @Query("""

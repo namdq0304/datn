@@ -17,6 +17,7 @@ public interface HoaDonChiTietRepository extends JpaRepository<HoaDonChiTietEnti
            SELECT COALESCE(SUM(ct.soLuong), 0)
            FROM HoaDonChiTietEntity ct
            WHERE ct.hoaDon.ngayTao >= :tu AND ct.hoaDon.ngayTao < :den
+             AND ct.hoaDon.trangThai NOT IN (0, 6)
            """)
     Long tongSoLuongXuatKho(@Param("tu") LocalDateTime tu, @Param("den") LocalDateTime den);
 
@@ -29,6 +30,7 @@ public interface HoaDonChiTietRepository extends JpaRepository<HoaDonChiTietEnti
                   SUM(ct.thanhTien)
            FROM HoaDonChiTietEntity ct
            WHERE ct.hoaDon.ngayTao >= :tu AND ct.hoaDon.ngayTao < :den
+             AND ct.hoaDon.trangThai NOT IN (0, 6)
            GROUP BY ct.chiTietSanPham.sanPham.id, ct.chiTietSanPham.sanPham.tenSanPham
            ORDER BY SUM(ct.soLuong) DESC
            """)

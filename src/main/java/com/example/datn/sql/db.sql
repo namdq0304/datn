@@ -172,27 +172,39 @@ CREATE TABLE CHI_TIET_SAN_PHAM (
 -- =============================================
 
 -- KHUYEN_MAI[cite: 2]
-CREATE TABLE Khuyen_mai (
-                            id INT IDENTITY(1,1) PRIMARY KEY,
-                            ma_khuyen_mai NVARCHAR(100) NOT NULL,
-                            ten NVARCHAR(255) NOT NULL,
-                            chi_tiet NVARCHAR(MAX),
-                            loai TINYINT,
-                            gia_tri INT,
-                            ngay_tao DATETIME DEFAULT GETDATE(),
-                            giam_gia_toi_thieu INT,
-                            giam_gia_toi_da INT,
-                            ngay_bat_dau DATETIME,
-                            ngay_ket_thuc DATETIME,
-                            trang_thai INT DEFAULT 1
+-- DB đang chạy bản cũ: dùng sql/migration_khuyen_mai.sql để nâng cấp (giữ dữ liệu cũ).
+CREATE TABLE KHUYEN_MAI (
+                            id               INT IDENTITY(1,1) PRIMARY KEY,
+                            ma_khuyen_mai    VARCHAR(50)   NOT NULL CONSTRAINT UQ_KHUYEN_MAI_MA UNIQUE,
+                            ten_khuyen_mai   NVARCHAR(255) NOT NULL,
+                            mo_ta            NVARCHAR(MAX),
+                            loai_giam        TINYINT       NOT NULL,          -- 1 = giảm %, 2 = giảm số tiền
+                            gia_tri_giam     DECIMAL(12,2) NOT NULL,
+                            giam_toi_da      DECIMAL(12,2) NULL,              -- trần tiền giảm cho loại %
+                            don_toi_thieu    DECIMAL(12,2) NOT NULL DEFAULT 0,-- giá trị đơn tối thiểu
+                            so_luong         INT           NULL,              -- NULL = không giới hạn lượt
+                            so_luong_da_dung INT           NOT NULL DEFAULT 0,
+                            ngay_bat_dau     DATETIME      NOT NULL,
+                            ngay_ket_thuc    DATETIME      NOT NULL,
+                            trang_thai       BIT           NOT NULL DEFAULT 1,
+                            ngay_tao         DATETIME      NOT NULL DEFAULT GETDATE(),
+                            ngay_cap_nhat    DATETIME      NULL,
+                            CONSTRAINT CK_KM_LOAI          CHECK (loai_giam IN (1, 2)),
+                            CONSTRAINT CK_KM_GIA_TRI       CHECK (gia_tri_giam > 0 AND (loai_giam = 2 OR gia_tri_giam <= 100)),
+                            CONSTRAINT CK_KM_GIAM_TOI_DA   CHECK (giam_toi_da IS NULL OR giam_toi_da > 0),
+                            CONSTRAINT CK_KM_DON_TOI_THIEU CHECK (don_toi_thieu >= 0),
+                            CONSTRAINT CK_KM_SO_LUONG      CHECK (so_luong IS NULL OR so_luong >= 0),
+                            CONSTRAINT CK_KM_DA_DUNG       CHECK (so_luong_da_dung >= 0 AND (so_luong IS NULL OR so_luong_da_dung <= so_luong)),
+                            CONSTRAINT CK_KM_THOI_GIAN     CHECK (ngay_ket_thuc > ngay_bat_dau)
 );
 
 -- 14. HOA_DON[cite: 2]
 CREATE TABLE HOA_DON (
                          id INT IDENTITY(1,1) PRIMARY KEY,
-                         ma_hoa_don VARCHAR(20) NOT NULL,
+                         ma_hoa_don VARCHAR(20) NOT NULL CONSTRAINT UQ_HOA_DON_MA UNIQUE,
                          khach_hang_id INT FOREIGN KEY REFERENCES KHACH_HANG(id),
                          nhan_vien_id INT FOREIGN KEY REFERENCES NHAN_VIEN(id),
+                         khuyen_mai_id INT CONSTRAINT FK_HOA_DON_KHUYEN_MAI FOREIGN KEY REFERENCES KHUYEN_MAI(id),
                          ngay_tao DATETIME DEFAULT GETDATE(),
                          tong_tien DECIMAL(12,2),
                          tien_giam DECIMAL(12,2),

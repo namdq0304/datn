@@ -93,7 +93,7 @@ public class SecurityConfig {
                                 "/chat-lieu/**",
                                 "/mau-sac/**",
                                 "/kich-thuoc/**",
-                                "/xuat-xu/  **",
+                                "/xuat-xu/**",
                                 "/san-pham/**",
                                 "/san-pham-chi-tiet/**"
                         ).permitAll()

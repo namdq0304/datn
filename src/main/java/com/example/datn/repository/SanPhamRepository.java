@@ -28,6 +28,34 @@ public interface SanPhamRepository extends JpaRepository<SanPhamEntity, Integer>
            """)
     List<SanPhamEntity> search(@Param("q") String q);
 
+    /**
+     * Lưới sản phẩm màn Bán hàng POS (phân trang).
+     * - Chỉ sản phẩm đang bán, có ít nhất 1 biến thể đang bán ĐÃ CÓ GIÁ (bán được).
+     * - q: tên / mã sản phẩm (gần đúng) hoặc mã chi tiết = quét mã vạch (chính xác).
+     * - conHang = true: chỉ sản phẩm còn biến thể tồn > 0.
+     */
+    @Query("""
+           SELECT s FROM SanPhamEntity s
+           WHERE s.trangThai = true
+             AND EXISTS (SELECT c.id FROM SanPhamChiTietEntity c
+                         WHERE c.sanPham = s AND c.trangThai = true AND c.giaBan IS NOT NULL
+                           AND (:conHang = false OR c.soLuong > 0))
+             AND (:q = ''
+                  OR LOWER(s.tenSanPham) LIKE LOWER(CONCAT('%', :q, '%'))
+                  OR LOWER(s.maSanPham)  LIKE LOWER(CONCAT('%', :q, '%'))
+                  OR EXISTS (SELECT c2.id FROM SanPhamChiTietEntity c2
+                             WHERE c2.sanPham = s AND c2.trangThai = true
+                               AND LOWER(c2.maChiTiet) = LOWER(:q)))
+             AND (:danhMucId    IS NULL OR s.danhMucId    = :danhMucId)
+             AND (:thuongHieuId IS NULL OR s.thuongHieuId = :thuongHieuId)
+           """)
+    Page<SanPhamEntity> findBanHang(
+            @Param("q") String q,
+            @Param("danhMucId") Integer danhMucId,
+            @Param("thuongHieuId") Integer thuongHieuId,
+            @Param("conHang") boolean conHang,
+            Pageable pageable);
+
     /** Phân trang — tìm kiếm kết hợp với lọc thương hiệu */
     @Query("""
            SELECT s FROM SanPhamEntity s

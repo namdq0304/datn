@@ -1,13 +1,14 @@
 package com.example.datn.service;
 
+import com.example.datn.dto.banhang.ThanhToanPosRequest;
 import com.example.datn.entity.*;
 import com.example.datn.exception.BadRequestException;
-import com.example.datn.exception.ConflictException;
 import com.example.datn.exception.NotFoundException;
 import com.example.datn.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Sort;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,49 +39,60 @@ public class BanHangService {
     private final SanPhamChiTietRepository chiTietRepo;
     private final SanPhamRepository sanPhamRepo;
     private final HinhAnhRepository hinhAnhRepo;
+    private final KhachHangRepository khachHangRepo;
+    private final KhuyenMaiService khuyenMaiService;
+    private final VietQrService vietQrService;
+    private final MaHoaDonGenerator maHoaDonGenerator;
 
     /** Ngưỡng tồn kho thấp hiển thị cảnh báo trên dashboard. */
     private static final int NGUONG_TON_THAP = 10;
 
     // ══════════════════════════════════════════════════════ BÁN HÀNG (POS)
 
-    /** Lưới sản phẩm cho POS: giá từ biến thể + ảnh chính + tổng tồn (kết nối API có sẵn của module sản phẩm). */
+    /**
+     * Lưới sản phẩm cho POS (phân trang + lọc ở backend).
+     * q: tên / mã SP (gần đúng) hoặc mã chi tiết (quét mã vạch, chính xác).
+     * Chỉ trả sản phẩm đang bán có biến thể đã có giá; giá/tồn tính trên các biến thể đó.
+     */
     @Transactional(readOnly = true)
-    public Map<String, Object> sanPhamBanHang(String q, int page, int size) {
+    public Map<String, Object> sanPhamBanHang(String q, Integer danhMucId, Integer thuongHieuId,
+                                              boolean conHang, int page, int size) {
         size = Math.min(Math.max(size, 1), 100);
         page = Math.max(page, 0);
+        String tuKhoa = q == null ? "" : q.trim();
 
-        // Dùng đúng query phân trang có sẵn của module sản phẩm — không sửa gì nó
-        var result = sanPhamRepo.findWithPaging(q == null ? "" : q.trim(), null,
+        var result = sanPhamRepo.findBanHang(tuKhoa, danhMucId, thuongHieuId, conHang,
                 org.springframework.data.domain.PageRequest.of(page, size,
-                        org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "ngayTao")));
+                        Sort.by(Sort.Direction.DESC, "ngayTao").and(Sort.by(Sort.Direction.DESC, "id"))));
 
         List<SanPhamEntity> items = result.getContent();
-        // Các query có sẵn của module sản phẩm nhận Collection<Integer>, còn SanPhamEntity.id là Long
-        List<Integer> ids = items.stream().map(e -> e.getId().intValue()).toList();
+        List<Long> ids = items.stream().map(SanPhamEntity::getId).toList();
 
-        Map<Integer, SanPhamChiTietRepository.GiaTongHop> giaMap = ids.isEmpty() ? Map.of()
-                : chiTietRepo.tongHopGia(ids).stream()
+        Map<Long, SanPhamChiTietRepository.GiaBanHang> giaMap = ids.isEmpty() ? Map.of()
+                : chiTietRepo.giaBanHang(ids).stream()
                     .collect(java.util.stream.Collectors.toMap(
-                            SanPhamChiTietRepository.GiaTongHop::getSanPhamId, java.util.function.Function.identity()));
+                            SanPhamChiTietRepository.GiaBanHang::getSanPhamId, java.util.function.Function.identity()));
         Map<Integer, String> anhMap = new HashMap<>();
         if (!ids.isEmpty()) {
-            for (var h : hinhAnhRepo.findAnhDaiDien(ids)) {
+            // Query ảnh có sẵn của module sản phẩm nhận Collection<Integer>
+            for (var h : hinhAnhRepo.findAnhDaiDien(ids.stream().map(Long::intValue).toList())) {
                 anhMap.putIfAbsent(h.getSanPhamId(), h.getUrlAnh());
             }
         }
 
         List<Map<String, Object>> content = new ArrayList<>();
         for (SanPhamEntity sp : items) {
-            Integer key = sp.getId().intValue();
-            var g = giaMap.get(key);
+            var g = giaMap.get(sp.getId());
+            long ton = g != null && g.getTonKho() != null ? g.getTonKho() : 0L;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", sp.getId());
             m.put("maSanPham", sp.getMaSanPham());
             m.put("tenSanPham", sp.getTenSanPham());
             m.put("giaBan", g != null && g.getGiaMin() != null ? g.getGiaMin() : BigDecimal.ZERO);
-            m.put("tongTonKho", g != null && g.getTonKho() != null ? g.getTonKho() : 0L);
-            m.put("urlAnhChinh", anhMap.get(key));
+            m.put("giaMax", g != null && g.getGiaMax() != null ? g.getGiaMax() : BigDecimal.ZERO);
+            m.put("tongTonKho", ton);
+            m.put("conHang", ton > 0);
+            m.put("urlAnhChinh", anhMap.get(sp.getId().intValue()));
             content.add(m);
         }
 
@@ -114,105 +126,130 @@ public class BanHangService {
 
     /**
      * Thanh toán POS — lưu hóa đơn + dòng hàng + thanh toán, trừ tồn kho, trả bill K80.
-     * body: {
-     *   items:        [{ chiTietId, soLuong }, ...]            (bắt buộc)
-     *   phuongThuc:   "TIEN_MAT" | "CHUYEN_KHOAN"              (mặc định TIEN_MAT)
-     *   tienGiam:     0                                        (tùy chọn)
-     *   khachHangId:  5                                        (tùy chọn — null = khách vãng lai)
-     *   tienKhachDua: 500000                                   (tùy chọn — tiền mặt)
-     *   maGiaoDich:   "FT123456"                               (tùy chọn — chuyển khoản)
-     * }
+     * Toàn bộ trong 1 transaction: lỗi ở bất kỳ bước nào → rollback, không trừ kho, không trừ lượt KM.
+     *
+     * Kiểm tra:
+     *  - gộp các dòng trùng biến thể trước khi so tồn (tránh bán âm kho)
+     *  - khóa dòng biến thể (UPDLOCK) theo thứ tự id tăng dần (tránh deadlock giữa 2 quầy)
+     *  - giá lấy từ DB; tiền giảm tính từ mã khuyến mãi ở backend
+     *  - tiền mặt: khách đưa phải đủ; chuyển khoản: bắt buộc mã giao dịch / nội dung CK
      */
     @Transactional
-    public Map<String, Object> thanhToan(Map<String, Object> body, Long nhanVienId) {
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> items = (List<Map<String, Object>>) body.get("items");
-        if (items == null || items.isEmpty()) {
-            throw new BadRequestException("Hóa đơn đang trống!");
+    public Map<String, Object> thanhToan(ThanhToanPosRequest req, Long nhanVienId) {
+        return lapHoaDon(req, nhanVienId, false);
+    }
+
+    /**
+     * VNPay — lập hóa đơn CHỜ THANH TOÁN (trạng thái 0): giữ hàng (trừ kho), trừ lượt KM,
+     * ghi 1 dòng CHI_TIET_THANH_TOAN trạng thái 0 (đang chờ, mã GD = mã hóa đơn = vnp_TxnRef).
+     * Kết quả VNPay trả về sẽ xác nhận (→ 3) hoặc hủy + hoàn kho (→ 6). Xem VnPayThanhToanService.
+     */
+    @Transactional
+    public Map<String, Object> lapHoaDonVnPay(ThanhToanPosRequest req, Long nhanVienId) {
+        return lapHoaDon(req, nhanVienId, true);
+    }
+
+    private Map<String, Object> lapHoaDon(ThanhToanPosRequest req, Long nhanVienId, boolean vnpay) {
+        if (nhanVienId == null) {
+            throw new AccessDeniedException("Tài khoản đang đăng nhập không phải nhân viên — không thể lập hóa đơn!");
         }
 
-        String phuongThuc = body.get("phuongThuc") == null ? "TIEN_MAT"
-                : body.get("phuongThuc").toString().trim().toUpperCase();
+        String phuongThuc = vnpay ? VnPayThanhToanService.MA_HINH_THUC
+                : req.phuongThuc() == null || req.phuongThuc().isBlank() ? "TIEN_MAT"
+                : req.phuongThuc().trim().toUpperCase();
+        if (!vnpay && VnPayThanhToanService.MA_HINH_THUC.equals(phuongThuc)) {
+            throw new BadRequestException("Thanh toán VNPay phải tạo qua /ban-hang/vnpay/tao-thanh-toan");
+        }
         HinhThucThanhToanEntity hinhThuc = hinhThucRepo.findByMaHinhThuc(phuongThuc)
-                .orElseThrow(() -> new BadRequestException(
-                        "Phương thức thanh toán không hợp lệ: " + phuongThuc));
+                .filter(h -> !Boolean.FALSE.equals(h.getTrangThai()))
+                .orElseThrow(() -> new BadRequestException("Phương thức thanh toán không hợp lệ: " + phuongThuc));
 
-        BigDecimal tienGiam = body.get("tienGiam") == null ? BigDecimal.ZERO
-                : new BigDecimal(body.get("tienGiam").toString());
-        if (tienGiam.signum() < 0) {
-            throw new BadRequestException("Tiền giảm không được âm!");
+        if (req.khachHangId() != null && !khachHangRepo.existsById(req.khachHangId())) {
+            throw new NotFoundException("Không tìm thấy khách hàng id=" + req.khachHangId());
         }
-        Long khachHangId = body.get("khachHangId") == null || body.get("khachHangId").toString().isBlank()
-                ? null : Long.valueOf(body.get("khachHangId").toString());
-        BigDecimal tienKhachDua = body.get("tienKhachDua") == null || body.get("tienKhachDua").toString().isBlank()
-                ? null : new BigDecimal(body.get("tienKhachDua").toString());
-        String maGiaoDich = body.get("maGiaoDich") == null ? null : body.get("maGiaoDich").toString().trim();
+        String maGiaoDich = req.maGiaoDich() == null || req.maGiaoDich().isBlank() ? null : req.maGiaoDich().trim();
 
-        // ── 1. Chốt dòng hàng: kiểm tra tồn + giá hiệu lực ──
+        // ── 1. Gộp dòng trùng biến thể, khóa theo thứ tự id ──
+        Map<Long, Integer> soLuongTheoBienThe = new TreeMap<>();
+        for (var it : req.items()) {
+            soLuongTheoBienThe.merge(it.chiTietId(), it.soLuong(), Integer::sum);
+        }
+
         BigDecimal tongTien = BigDecimal.ZERO;
         List<HoaDonChiTietEntity> dongHang = new ArrayList<>();
-        for (Map<String, Object> it : items) {
-            Long chiTietId = Long.valueOf(it.get("chiTietId").toString());
-            int soLuong = Integer.parseInt(it.get("soLuong").toString());
-            if (soLuong <= 0) {
-                throw new BadRequestException("Số lượng phải lớn hơn 0!");
-            }
+        for (var e : soLuongTheoBienThe.entrySet()) {
+            Long chiTietId = e.getKey();
+            int soLuong = e.getValue();
 
-            SanPhamChiTietEntity bt = chiTietRepo.findByIdAndTrangThaiTrue(chiTietId)
+            SanPhamChiTietEntity bt = chiTietRepo.findDangBanForUpdate(chiTietId)
                     .orElseThrow(() -> new NotFoundException(
-                            "Không tìm thấy biến thể id=" + chiTietId));
+                            "Biến thể id=" + chiTietId + " không tồn tại hoặc đã ngừng bán!"));
+            String tenBt = String.format("%s [%s size %s]", bt.getSanPham().getTenSanPham(),
+                    bt.getMauSac().getTenMau(), bt.getKichThuoc().getTenKichThuoc());
 
-            long ton = bt.getSoLuong() == null ? 0 : bt.getSoLuong();
+            int ton = bt.getSoLuong() == null ? 0 : bt.getSoLuong();
             if (soLuong > ton) {
-                throw new BadRequestException(String.format(
-                        "%s [%s size %s] chỉ còn %d đôi (yêu cầu %d)!",
-                        bt.getSanPham().getTenSanPham(), bt.getMauSac().getTenMau(),
-                        bt.getKichThuoc().getTenKichThuoc(), ton, soLuong));
+                throw new BadRequestException(String.format("%s chỉ còn %d đôi (yêu cầu %d)!", tenBt, ton, soLuong));
             }
-
             BigDecimal donGia = bt.getGiaBan();
-            if (donGia == null) {
-                throw new BadRequestException(String.format(
-                        "%s [%s size %s] chưa có giá bán!", bt.getSanPham().getTenSanPham(),
-                        bt.getMauSac().getTenMau(), bt.getKichThuoc().getTenKichThuoc()));
+            if (donGia == null || donGia.signum() <= 0) {
+                throw new BadRequestException(tenBt + " chưa có giá bán!");
             }
-            BigDecimal thanhTien = donGia.multiply(BigDecimal.valueOf(soLuong));
-            tongTien = tongTien.add(thanhTien);
+            BigDecimal thanhTienDong = donGia.multiply(BigDecimal.valueOf(soLuong));
+            tongTien = tongTien.add(thanhTienDong);
 
             dongHang.add(HoaDonChiTietEntity.builder()
                     .chiTietSanPham(bt)
                     .soLuong(soLuong)
                     .donGia(donGia)
-                    .thanhTien(thanhTien)
+                    .thanhTien(thanhTienDong)
                     .build());
         }
 
-        if (tienGiam.compareTo(tongTien) > 0) {
-            throw new BadRequestException("Tiền giảm không được lớn hơn tạm tính!");
+        // ── 2. Khuyến mãi (backend tự tính, trừ 1 lượt) ──
+        KhuyenMaiEntity khuyenMai = null;
+        BigDecimal tienGiam = BigDecimal.ZERO;
+        if (req.maKhuyenMai() != null && !req.maKhuyenMai().isBlank()) {
+            khuyenMai = khuyenMaiService.apDung(req.maKhuyenMai(), tongTien);
+            tienGiam = khuyenMaiService.tinhTienGiam(khuyenMai, tongTien);
         }
         BigDecimal thanhTien = tongTien.subtract(tienGiam);
 
-        // Tiền mặt phải đủ
+        // ── 3. Kiểm tra tiền theo phương thức ──
+        BigDecimal tienKhachDua = null;
         BigDecimal tienThoi = null;
         if ("TIEN_MAT".equals(phuongThuc)) {
-            if (tienKhachDua != null && tienKhachDua.compareTo(thanhTien) < 0) {
-                throw new BadRequestException("Khách đưa chưa đủ tiền!");
+            tienKhachDua = req.tienKhachDua();
+            if (tienKhachDua == null) {
+                throw new BadRequestException("Vui lòng nhập số tiền khách đưa!");
             }
-            tienThoi = tienKhachDua == null ? null : tienKhachDua.subtract(thanhTien);
+            if (tienKhachDua.compareTo(thanhTien) < 0) {
+                throw new BadRequestException("Khách đưa chưa đủ tiền! Cần " + thanhTien.stripTrailingZeros().toPlainString() + "đ");
+            }
+            tienThoi = tienKhachDua.subtract(thanhTien);
+        } else if (vnpay) {
+            if (thanhTien.compareTo(VnPayThanhToanService.SO_TIEN_TOI_THIEU) < 0) {
+                throw new BadRequestException("VNPay chỉ nhận giao dịch từ 5.000đ trở lên!");
+            }
+        } else if (maGiaoDich == null) {
+            throw new BadRequestException("Chuyển khoản: vui lòng tạo mã QR hoặc nhập mã giao dịch!");
         }
 
-        // ── 2. Lưu hóa đơn (3 = POS hoàn thành) ──
+        // ── 4. Lưu hóa đơn (3 = POS hoàn thành; VNPay: 0 = chờ thanh toán) ──
+        String maHoaDon = maHoaDonGenerator.sinh(MaHoaDonGenerator.PREFIX_POS);
         HoaDonEntity hd = hoaDonRepo.save(HoaDonEntity.builder()
-                .maHoaDon(sinhMaHoaDon())
-                .khachHangId(khachHangId)
+                .maHoaDon(maHoaDon)
+                .khachHangId(req.khachHangId())
                 .nhanVienId(nhanVienId)
+                .khuyenMaiId(khuyenMai == null ? null : khuyenMai.getId())
                 .tongTien(tongTien)
                 .tienGiam(tienGiam)
                 .thanhTien(thanhTien)
-                .trangThai(3)
+                .trangThai(vnpay ? 0 : 3)
                 .build());
+        if (vnpay) maGiaoDich = maHoaDon; // = vnp_TxnRef, đổi thành mã GD VNPay khi thanh toán xong
 
-        // ── 3. Lưu chi tiết + trừ tồn kho ──
+        // ── 5. Lưu chi tiết + trừ tồn kho (dòng đã khóa ở bước 1) ──
         for (HoaDonChiTietEntity ct : dongHang) {
             ct.setHoaDon(hd);
             hoaDonChiTietRepo.save(ct);
@@ -222,23 +259,29 @@ public class BanHangService {
             chiTietRepo.save(bt);
         }
 
-        // ── 4. Lưu thanh toán (bảng CHI_TIET_THANH_TOAN) ──
+        // ── 6. Lưu thanh toán (bảng CHI_TIET_THANH_TOAN) ──
         thanhToanRepo.save(ChiTietThanhToanEntity.builder()
                 .hoaDon(hd)
                 .hinhThuc(hinhThuc)
                 .soTien(thanhTien)
                 .maGiaoDich(maGiaoDich)
-                .trangThai(1)
+                .trangThai(vnpay ? 0 : 1)   // 0 = đang chờ VNPay, 1 = đã nhận tiền
                 .build());
 
-        // ── 5. Trả bill K80 ──
+        // ── 7. Trả bill K80 ──
         Map<String, Object> bill = buildBill(hd, dongHang);
         bill.put("phuongThuc", hinhThuc.getTenHinhThuc());
         bill.put("maPhuongThuc", hinhThuc.getMaHinhThuc());
         bill.put("tienKhachDua", tienKhachDua);
         bill.put("tienThoi", tienThoi);
         bill.put("maGiaoDich", maGiaoDich);
+        bill.put("maKhuyenMai", khuyenMai == null ? null : khuyenMai.getMaKhuyenMai());
         return bill;
+    }
+
+    /** Mã QR VietQR cho số tiền cần thu (POS chuyển khoản). */
+    public Map<String, Object> taoMaQr(BigDecimal soTien) {
+        return vietQrService.taoMaQr(soTien);
     }
 
     /** In lại bill của hóa đơn cũ. */
@@ -444,6 +487,7 @@ public class BanHangService {
     public void seedHinhThucThanhToan() {
         taoNeuThieu("TIEN_MAT", "Tiền mặt", "Thanh toán bằng tiền mặt tại quầy");
         taoNeuThieu("CHUYEN_KHOAN", "Chuyển khoản", "Chuyển khoản ngân hàng / quét mã QR");
+        taoNeuThieu(VnPayThanhToanService.MA_HINH_THUC, "VNPay", "Cổng thanh toán VNPay (QR / thẻ ATM / thẻ quốc tế)");
     }
 
     private void taoNeuThieu(String ma, String ten, String moTa) {
@@ -452,16 +496,6 @@ public class BanHangService {
                     .maHinhThuc(ma).tenHinhThuc(ten).moTa(moTa).trangThai(true).build());
             log.info("Đã nạp hình thức thanh toán: {} - {}", ma, ten);
         }
-    }
-
-    /** Mã hóa đơn: POS + yyMMdd + 4 số ngẫu nhiên, kiểm tra trùng. */
-    private String sinhMaHoaDon() {
-        String prefix = "POS" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyMMdd"));
-        for (int i = 0; i < 50; i++) {
-            String ma = prefix + String.format("%04d", (int) (Math.random() * 10000));
-            if (!hoaDonRepo.existsByMaHoaDon(ma)) return ma;
-        }
-        throw new ConflictException("Không sinh được mã hóa đơn, thử lại!");
     }
 
     /** Spring Data đôi khi bọc cả dòng kết quả vào mảng 1 phần tử (Object[]{Object[2]})

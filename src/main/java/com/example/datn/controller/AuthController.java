@@ -5,6 +5,7 @@ import com.example.datn.entity.NhanVienEntity;
 import com.example.datn.repository.KhachHangRepository;
 import com.example.datn.repository.NhanVienRepository;
 import com.example.datn.security.JwtUtil;
+import com.example.datn.security.GoogleTokenVerifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,6 +43,9 @@ public class AuthController {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private GoogleTokenVerifier googleTokenVerifier;
 
     // =========================================================================
     // I. PHẦN DÀNH CHO NHÂN VIÊN / QUẢN TRỊ (ADMIN & NHÂN VIÊN)
@@ -209,19 +213,110 @@ public class AuthController {
 
         // Kiểm tra trạng thái hoạt động của khách hàng
         if (kh.getTrangThai() != null && !kh.getTrangThai()) {
-            Map<String, Object> error = new HashMap<>();
-            error.put("success", false);
-            error.put("message", "Tài khoản khách hàng này đã bị khóa!");
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
+            return loiKhachHang(HttpStatus.FORBIDDEN, "Tài khoản khách hàng này đã bị khóa!", null);
         }
 
-        // Sinh JWT Token dành riêng cho Khách hàng
-        String accessToken = jwtUtil.generateToken(username, "KHACH_HANG");
-        String refreshToken = jwtUtil.generateRefreshToken(username);
+        logger.info("Khách hàng {} đăng nhập thành công", username);
+        return ResponseEntity.ok(phienKhachHang(kh, "Đăng nhập khách hàng thành công!"));
+    }
 
+    private static final java.util.regex.Pattern EMAIL_REGEX =
+            java.util.regex.Pattern.compile("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
+    private static final java.util.regex.Pattern SDT_REGEX = java.util.regex.Pattern.compile("^0\\d{9}$");
+
+    /**
+     * API: Đăng ký tài khoản Khách Hàng mới — đăng ký xong ĐĂNG NHẬP LUÔN (trả accessToken như /customer/login).
+     * URL: POST http://localhost:8080/api/auth/customer/register
+     * Lỗi theo ô: { success:false, message, errors: { email | password | hoTen | sdt } }
+     */
+    @PostMapping("/customer/register")
+    public ResponseEntity<?> registerCustomer(
+            @RequestParam(required = false) String email,
+            @RequestParam(required = false) String password,
+            @RequestParam(required = false) String hoTen,
+            @RequestParam(required = false) String sdt
+    ) {
+        String em = email == null ? "" : email.trim().toLowerCase();
+        String ten = hoTen == null ? "" : hoTen.trim().replaceAll("\\s+", " ");
+        String dt = sdt == null || sdt.isBlank() ? null : sdt.trim();
+        logger.info("Yêu cầu đăng ký khách hàng mới: email={}", em);
+
+        Map<String, String> errors = new java.util.LinkedHashMap<>();
+        if (ten.isEmpty()) errors.put("hoTen", "Vui lòng nhập họ tên!");
+        else if (ten.length() > 100) errors.put("hoTen", "Họ tên tối đa 100 ký tự!");
+        if (em.isEmpty()) errors.put("email", "Vui lòng nhập email!");
+        else if (em.length() > 100 || !EMAIL_REGEX.matcher(em).matches()) errors.put("email", "Email không đúng định dạng!");
+        else if (khachHangRepository.existsByEmail(em) || nhanVienRepository.existsByEmail(em))
+            errors.put("email", "Email này đã được sử dụng!");
+        if (dt != null) {
+            if (!SDT_REGEX.matcher(dt).matches()) errors.put("sdt", "Số điện thoại gồm 10 chữ số, bắt đầu bằng 0!");
+            else if (khachHangRepository.existsBySdt(dt)) errors.put("sdt", "Số điện thoại này đã được sử dụng!");
+        }
+        if (password == null || password.length() < 6) errors.put("password", "Mật khẩu phải có ít nhất 6 ký tự!");
+        else if (password.length() > 100) errors.put("password", "Mật khẩu tối đa 100 ký tự!");
+        if (!errors.isEmpty()) {
+            return loiKhachHang(HttpStatus.BAD_REQUEST, errors.values().iterator().next(), errors);
+        }
+
+        KhachHangEntity kh = khachHangRepository.save(KhachHangEntity.builder()
+                .maKhachHang(sinhMaKhachHang())
+                .hoTen(ten)
+                .email(em)
+                .sdt(dt)
+                .matKhau(passwordEncoder.encode(password)) // Mã hóa mật khẩu
+                .trangThai(true)
+                .build());
+
+        logger.info("Đăng ký khách hàng {} thành công ({})", kh.getMaKhachHang(), em);
+        return ResponseEntity.ok(phienKhachHang(kh, "Đăng ký thành công! Chào mừng bạn đến với VibeFlow."));
+    }
+
+    /**
+     * API: Đăng nhập / đăng ký Khách Hàng bằng Google (Google Identity Services).
+     * URL: POST http://localhost:8080/api/auth/customer/google   body: { "credential": "<Google ID token>" }
+     * - Email đã có tài khoản khách hàng → đăng nhập vào tài khoản đó.
+     * - Chưa có → tự tạo tài khoản khách hàng (mật khẩu ngẫu nhiên, chỉ đăng nhập qua Google).
+     */
+    @PostMapping("/customer/google")
+    public ResponseEntity<?> loginGoogle(@RequestBody(required = false) Map<String, String> body) {
+        GoogleTokenVerifier.GoogleUser gu = googleTokenVerifier.xacMinh(body == null ? null : body.get("credential"));
+
+        if (nhanVienRepository.existsByEmail(gu.email())) {
+            return loiKhachHang(HttpStatus.CONFLICT,
+                    "Email này là tài khoản nhân viên — vui lòng đăng nhập ở Cổng Nhân Viên.", null);
+        }
+
+        KhachHangEntity kh = khachHangRepository.findByEmail(gu.email()).orElse(null);
+        boolean moi = kh == null;
+        if (moi) {
+            String ten = gu.hoTen() == null || gu.hoTen().isBlank() ? gu.email().split("@")[0] : gu.hoTen().trim();
+            kh = khachHangRepository.save(KhachHangEntity.builder()
+                    .maKhachHang(sinhMaKhachHang())
+                    .hoTen(ten.length() > 100 ? ten.substring(0, 100) : ten)
+                    .email(gu.email())
+                    // Mật khẩu ngẫu nhiên: tài khoản tạo qua Google không đăng nhập bằng mật khẩu được
+                    .matKhau(passwordEncoder.encode(java.util.UUID.randomUUID().toString()))
+                    .trangThai(true)
+                    .build());
+            logger.info("Tạo khách hàng mới qua Google: {} ({})", kh.getMaKhachHang(), gu.email());
+        }
+        if (kh.getTrangThai() != null && !kh.getTrangThai()) {
+            return loiKhachHang(HttpStatus.FORBIDDEN, "Tài khoản khách hàng này đã bị khóa!", null);
+        }
+
+        Map<String, Object> res = phienKhachHang(kh, moi
+                ? "Đã tạo tài khoản bằng Google. Chào mừng bạn đến với VibeFlow!"
+                : "Đăng nhập bằng Google thành công!");
+        res.put("taiKhoanMoi", moi);
+        if (gu.anh() != null) res.put("anhDaiDien", gu.anh());
+        return ResponseEntity.ok(res);
+    }
+
+    /** Phản hồi đăng nhập khách hàng dùng chung (mật khẩu / đăng ký / Google): thông tin + JWT. */
+    private Map<String, Object> phienKhachHang(KhachHangEntity kh, String message) {
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
-        response.put("message", "Đăng nhập khách hàng thành công!");
+        response.put("message", message);
         response.put("id", kh.getId());
         response.put("maKhachHang", kh.getMaKhachHang());
         response.put("hoTen", kh.getHoTen());
@@ -230,61 +325,27 @@ public class AuthController {
         response.put("gioiTinh", kh.getGioiTinh());
         response.put("ngaySinh", kh.getNgaySinh());
         response.put("role", "KHACH_HANG");
-        response.put("accessToken", accessToken);
-        response.put("refreshToken", refreshToken);
-
-        logger.info("Khách hàng {} đăng nhập thành công", username);
-        return ResponseEntity.ok(response);
+        response.put("accessToken", jwtUtil.generateToken(kh.getEmail(), "KHACH_HANG"));
+        response.put("refreshToken", jwtUtil.generateRefreshToken(kh.getEmail()));
+        return response;
     }
 
-    /**
-     * API: Đăng ký tài khoản Khách Hàng mới
-     * URL: POST http://localhost:8080/api/auth/customer/register
-     */
-    @PostMapping("/customer/register")
-    public ResponseEntity<?> registerCustomer(
-            @RequestParam String email,
-            @RequestParam String password,
-            @RequestParam String hoTen,
-            @RequestParam(required = false) String sdt
-    ) {
-        logger.info("Yêu cầu đăng ký khách hàng mới: email={}", email);
+    private ResponseEntity<Map<String, Object>> loiKhachHang(HttpStatus status, String message, Map<String, String> errors) {
+        Map<String, Object> error = new HashMap<>();
+        error.put("success", false);
+        error.put("message", message);
+        if (errors != null) error.put("errors", errors);
+        return ResponseEntity.status(status).body(error);
+    }
 
-        if (email == null || email.trim().isEmpty() || password == null || password.trim().isEmpty()
-                || hoTen == null || hoTen.trim().isEmpty()) {
-            Map<String, Object> error = new HashMap<>();
-            error.put("success", false);
-            error.put("message", "Vui lòng nhập đầy đủ email, mật khẩu và họ tên!");
-            return ResponseEntity.badRequest().body(error);
+    /** Mã khách hàng KH + 6 số, không trùng. */
+    private String sinhMaKhachHang() {
+        java.security.SecureRandom rd = new java.security.SecureRandom();
+        for (int i = 0; i < 20; i++) {
+            String ma = "KH" + (100000 + rd.nextInt(900000));
+            if (!khachHangRepository.existsByMaKhachHang(ma)) return ma;
         }
-
-        if (khachHangRepository.existsByEmail(email)) {
-            Map<String, Object> error = new HashMap<>();
-            error.put("success", false);
-            error.put("message", "Email này đã được sử dụng!");
-            return ResponseEntity.badRequest().body(error);
-        }
-
-        // Tạo mã khách hàng ngẫu nhiên: KH + 6 chữ số
-        String maKhachHang = "KH" + (int)((Math.random() * 900000) + 100000);
-
-        KhachHangEntity kh = KhachHangEntity.builder()
-                .maKhachHang(maKhachHang)
-                .hoTen(hoTen)
-                .email(email)
-                .sdt(sdt)
-                .matKhau(passwordEncoder.encode(password)) // Mã hóa mật khẩu
-                .trangThai(true)
-                .build();
-
-        khachHangRepository.save(kh);
-
-        Map<String, Object> res = new HashMap<>();
-        res.put("success", true);
-        res.put("message", "Đăng ký tài khoản khách hàng thành công!");
-        res.put("maKhachHang", maKhachHang);
-        res.put("email", email);
-        return ResponseEntity.ok(res);
+        throw new com.example.datn.exception.ConflictException("Không sinh được mã khách hàng, vui lòng thử lại!");
     }
 
     /**

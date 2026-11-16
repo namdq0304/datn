@@ -39,6 +39,8 @@ public class HoaDonService {
     private final SanPhamChiTietRepository sanPhamChiTietRepo;
     private final KhachHangRepository khachHangRepo;
     private final NhanVienRepository nhanVienRepo;
+    private final MaHoaDonGenerator maHoaDonGenerator;
+    private final KhuyenMaiService khuyenMaiService;
 
     // ─────────────────────────────────────────────── Tạo hóa đơn
 
@@ -49,13 +51,14 @@ public class HoaDonService {
         if (req.khachHangId() != null && !khachHangRepo.existsById(req.khachHangId()))
             throw new NotFoundException("Không tìm thấy khách hàng");
 
-        Map<Long, Integer> soLuongTheoId = new LinkedHashMap<>();
+        // TreeMap: khóa biến thể theo thứ tự id tăng dần → tránh deadlock với giao dịch khác
+        Map<Long, Integer> soLuongTheoId = new TreeMap<>();
         for (var item : req.sanPham()) soLuongTheoId.merge(item.chiTietSanPhamId(), item.soLuong(), Integer::sum);
 
         BigDecimal tong = BigDecimal.ZERO;
         List<SanPhamChiTietEntity> variants = new ArrayList<>();
         for (var e : soLuongTheoId.entrySet()) {
-            SanPhamChiTietEntity spct = sanPhamChiTietRepo.findByIdAndTrangThaiTrue(e.getKey())
+            SanPhamChiTietEntity spct = sanPhamChiTietRepo.findDangBanForUpdate(e.getKey())
                     .orElseThrow(() -> new NotFoundException("Không tìm thấy sản phẩm chi tiết ID " + e.getKey()));
             if (spct.getSoLuong() == null || spct.getSoLuong() < e.getValue())
                 throw new BadRequestException("Sản phẩm " + spct.getMaChiTiet() + " không đủ tồn kho");
@@ -65,9 +68,8 @@ public class HoaDonService {
         BigDecimal giam = req.tienGiam() == null ? BigDecimal.ZERO : req.tienGiam();
         if (giam.compareTo(tong) > 0) throw new BadRequestException("Tiền giảm không được lớn hơn tổng tiền");
 
-        String ma = "HD" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyMMddHHmmss"));
         HoaDonEntity hd = hoaDonRepo.save(HoaDonEntity.builder()
-                .maHoaDon(ma)
+                .maHoaDon(maHoaDonGenerator.sinh(MaHoaDonGenerator.PREFIX_HOA_DON))
                 .khachHangId(req.khachHangId())
                 .nhanVienId(nv.getId())
                 .tongTien(tong).tienGiam(giam).thanhTien(tong.subtract(giam))
@@ -134,13 +136,20 @@ public class HoaDonService {
         if (cu == DA_HUY) throw new BadRequestException("Hóa đơn đã được hủy");
         if (cu == HOAN_THANH) throw new BadRequestException("Không thể hủy hóa đơn đã hoàn thành");
 
-        // Hoàn lại tồn kho
-        for (HoaDonChiTietEntity ct : chiTietRepo.findByHoaDon_Id(id)) {
-            SanPhamChiTietEntity spct = ct.getChiTietSanPham();
+        // Hoàn lại tồn kho (khóa dòng theo thứ tự id để không mất cập nhật khi POS đang bán cùng biến thể)
+        List<HoaDonChiTietEntity> dsChiTiet = chiTietRepo.findByHoaDon_Id(id).stream()
+                .filter(ct -> ct.getChiTietSanPham() != null)
+                .sorted(Comparator.comparing(ct -> ct.getChiTietSanPham().getId()))
+                .toList();
+        for (HoaDonChiTietEntity ct : dsChiTiet) {
+            SanPhamChiTietEntity spct = sanPhamChiTietRepo.findByIdForUpdate(ct.getChiTietSanPham().getId())
+                    .orElse(null);
             if (spct == null) continue;
             spct.setSoLuong((spct.getSoLuong() == null ? 0 : spct.getSoLuong()) + ct.getSoLuong());
             sanPhamChiTietRepo.save(spct);
         }
+        // Trả lại 1 lượt khuyến mãi đã dùng
+        khuyenMaiService.hoanLuot(hd.getKhuyenMaiId());
         hd.setTrangThai(DA_HUY);
         hoaDonRepo.save(hd);
         ghiLichSu(hd, timNhanVienId(email), cu, DA_HUY, lyDo == null ? "Hủy hóa đơn" : lyDo);
@@ -159,6 +168,8 @@ public class HoaDonService {
         HinhThucThanhToanEntity hinhThuc = hinhThucRepo.findById(req.hinhThucThanhToanId())
                 .filter(x -> !Boolean.FALSE.equals(x.getTrangThai()))
                 .orElseThrow(() -> new NotFoundException("Hình thức thanh toán không tồn tại hoặc đã khóa"));
+        if (VnPayThanhToanService.MA_HINH_THUC.equals(hinhThuc.getMaHinhThuc()))
+            throw new BadRequestException("VNPay chỉ thanh toán qua cổng VNPay ở màn Bán hàng POS");
 
         BigDecimal thanhTien = nz(hd.getThanhTien());
         BigDecimal daTra = tongDaThanhToan(hoaDonId);
@@ -187,7 +198,9 @@ public class HoaDonService {
 
     @Transactional(readOnly = true)
     public List<Map<String, Object>> danhSachHinhThuc() {
-        return hinhThucRepo.findByTrangThaiTrue().stream().map(x -> {
+        return hinhThucRepo.findByTrangThaiTrue().stream()
+                .filter(x -> !VnPayThanhToanService.MA_HINH_THUC.equals(x.getMaHinhThuc())) // VNPay phải qua cổng
+                .map(x -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", x.getId());
             m.put("maHinhThuc", x.getMaHinhThuc());

@@ -40,6 +40,10 @@ public class HoaDonEntity {
     @Column(name = "nhan_vien_id")
     Long nhanVienId;
 
+    /** FK sang KHUYEN_MAI.id — mã khuyến mãi đã áp dụng (null = không dùng). */
+    @Column(name = "khuyen_mai_id")
+    Integer khuyenMaiId;
+
     @CreationTimestamp
     @Column(name = "ngay_tao", updatable = false)
     LocalDateTime ngayTao;

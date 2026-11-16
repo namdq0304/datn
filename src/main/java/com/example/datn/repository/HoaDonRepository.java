@@ -13,11 +13,12 @@ public interface HoaDonRepository extends JpaRepository<HoaDonEntity, Integer> {
 
     boolean existsByMaHoaDon(String maHoaDon);
 
-    /** Doanh thu + số đơn trong kỳ (POS + online gộp chung). */
+    /** Doanh thu + số đơn trong kỳ (POS + online gộp chung; bỏ hóa đơn chờ thanh toán 0 và đã hủy 6). */
     @Query("""
            SELECT COALESCE(SUM(h.thanhTien), 0), COUNT(h)
            FROM HoaDonEntity h
            WHERE h.ngayTao >= :tu AND h.ngayTao < :den
+             AND h.trangThai NOT IN (0, 6)
            """)
     Object[] tongHopTheoKy(@Param("tu") LocalDateTime tu, @Param("den") LocalDateTime den);
 
@@ -26,6 +27,7 @@ public interface HoaDonRepository extends JpaRepository<HoaDonEntity, Integer> {
            SELECT COALESCE(SUM(h.thanhTien), 0), COUNT(h)
            FROM HoaDonEntity h
            WHERE h.ngayTao >= :tu AND h.ngayTao < :den
+             AND h.trangThai NOT IN (0, 6)
            """)
     Object[] tongHopKyTruoc(@Param("tu") LocalDateTime tu, @Param("den") LocalDateTime den);
 
@@ -42,7 +44,7 @@ public interface HoaDonRepository extends JpaRepository<HoaDonEntity, Integer> {
            SELECT COALESCE(SUM(h.thanhTien), 0)
            FROM HoaDonEntity h
            WHERE h.ngayTao >= :tu AND h.ngayTao < :den
-             AND h.trangThai <> 3
+             AND h.trangThai NOT IN (0, 3, 6)
            """)
     BigDecimal doanhThuOnline(@Param("tu") LocalDateTime tu, @Param("den") LocalDateTime den);
 
@@ -52,6 +54,7 @@ public interface HoaDonRepository extends JpaRepository<HoaDonEntity, Integer> {
                   COALESCE(SUM(h.thanh_tien), 0) AS doanhThu
            FROM hoa_don h
            WHERE h.ngay_tao >= :tu AND h.ngay_tao < :den
+             AND h.trang_thai NOT IN (0, 6)
            GROUP BY CONVERT(date, h.ngay_tao)
            ORDER BY CONVERT(date, h.ngay_tao)
            """, nativeQuery = true)
@@ -59,4 +62,13 @@ public interface HoaDonRepository extends JpaRepository<HoaDonEntity, Integer> {
 
     /** Danh sách hóa đơn mới nhất trước — màn Quản lý hóa đơn. */
     List<HoaDonEntity> findAllByOrderByNgayTaoDesc();
+
+    /** Khóa dòng hóa đơn theo mã (VNPay Return/IPN/hủy có thể chạy đồng thời → xử lý tuần tự). */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT h FROM HoaDonEntity h WHERE h.maHoaDon = :ma")
+    java.util.Optional<HoaDonEntity> findByMaHoaDonForUpdate(@Param("ma") String ma);
+
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT h FROM HoaDonEntity h WHERE h.id = :id")
+    java.util.Optional<HoaDonEntity> findByIdForUpdate(@Param("id") Integer id);
 }
