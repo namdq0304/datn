@@ -30,4 +30,7 @@ public interface ChiTietThanhToanRepository extends JpaRepository<ChiTietThanhTo
              AND tt.hoaDon.ngayTao >= :tu AND tt.hoaDon.ngayTao < :den
            """)
     BigDecimal tongTienMat(@Param("tu") LocalDateTime tu, @Param("den") LocalDateTime den);
+
+    /** Lịch sử thanh toán của 1 hóa đơn, mới nhất trước. */
+    List<ChiTietThanhToanEntity> findByHoaDon_IdOrderByNgayThanhToanDesc(Integer hoaDonId);
 }

@@ -56,4 +56,7 @@ public interface HoaDonRepository extends JpaRepository<HoaDonEntity, Integer> {
            ORDER BY CONVERT(date, h.ngay_tao)
            """, nativeQuery = true)
     List<Object[]> doanhThuTheoNgay(@Param("tu") LocalDateTime tu, @Param("den") LocalDateTime den);
+
+    /** Danh sách hóa đơn mới nhất trước — màn Quản lý hóa đơn. */
+    List<HoaDonEntity> findAllByOrderByNgayTaoDesc();
 }
